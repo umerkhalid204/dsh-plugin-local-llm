@@ -20,6 +20,30 @@ model list is described. Strata's listing is not a documented contract, so
 `providers.strata.models` declares the packs you serve (names and context
 windows), and that declaration fills whatever the server leaves out.
 
+## Install
+
+Build a package from this checkout and install that, rather than the directory:
+
+```sh
+npm pack --pack-destination dist     # -> dist/dsh-plugin-local-llm-<version>.tgz
+```
+
+Then in the Harness: **Settings → Plugins → Install bundle**, and point it at the
+`.tgz`. A bundle is a patch layer over the Loader entry list, so if you prefer
+declaring it, add one row to `~/.dsh/profiles/<profile>/cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: local-llm
+      name: 'dsh-plugin-local-llm'
+```
+
+The row id `local-llm` is what its config, settings namespace and `/local-llm/api`
+routes are keyed by; `name` is the package specifier, whose version comes from
+what you installed. Installing a **package** is the supported layout — only then
+can the plugin resolve its own dependencies, which is what gives it a settings
+form (see below).
+
 ## Use it
 
 ```
