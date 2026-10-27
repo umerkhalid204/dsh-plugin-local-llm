@@ -1,0 +1,53 @@
+{
+  "name": "dsh-plugin-local-llm",
+  "version": "0.2.2",
+  "private": true,
+  "description": "DeepSeek Harness plugin: run the agent on models served by your own machine. Registers lmstudio, ollama, strata, lemonade, and local-openai provider routes through an OpenAI-compatible chat-completions adapter, lists each engine in Settings as a configurable third-party provider with endpoint editing and model discovery, and adds the local_models tool.",
+  "type": "module",
+  "license": "MIT",
+  "author": "umerkhalid204",
+  "keywords": [
+    "dsh-plugin",
+    "dsh-bundle",
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "llm",
+    "local-models",
+    "ollama",
+    "lm-studio",
+    "strata",
+    "lemonade",
+    "llama.cpp",
+    "vllm",
+    "openai-compatible",
+    "plugin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.5"
+  },
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "vendor/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

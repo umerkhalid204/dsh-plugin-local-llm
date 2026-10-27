@@ -1,0 +1,77 @@
+# dsh-plugin-local-llm bundle layer: one Host row (provider adapter, provider
+# directory, model discovery, the local_models tool, and the /local-llm/api/*
+# routes). There is no Client half: local engines surface in the model picker
+# and in Settings exactly like the shipped providers, not as a control of its
+# own.
+#
+# Plain config knobs read by index.js through its Config schema. Override this
+# row from your own profile patch (`id: local-llm`) or, better, in
+# Settings → Models → the engine's card: the surface writes into
+# `providers.<id>` below, which is where this adapter reads from.
+#
+#   providers{}        one entry per engine, keyed by provider route id:
+#                      label        display name in the picker and in Settings
+#                      vendor       catalog dialect: lmstudio | ollama | strata
+#                                   | lemonade | openai
+#                      baseURL      OpenAI-compatible base, including its prefix
+#                                   (Strata/Lemonade/llama.cpp serve /v1;
+#                                   LM Studio's richer catalog is read off the
+#                                   same origin at /api/v0/models)
+#                      baseURLEnv   environment variables allowed to override it
+#                      apiKey       bearer for servers that demand one: Strata
+#                                   when launched with --access lan or --new-key,
+#                                   Lemonade whenever LEMONADE_API_KEY is set
+#                      enabled      false keeps the engine out of the profile
+#                                   (local-openai is off so two engines never
+#                                   claim one port)
+#                      models[]     hand-declared catalog, used when a server
+#                                   lists nothing (Strata's listing is not part
+#                                   of its documented contract) or to supply a
+#                                   context window the server left out
+#   apiKey             default bearer for engines without their own
+#   probeTimeoutMs     per-request timeout while interrogating a server
+#   scanTtlMs          how long a scan result is reused before re-probing
+#   maxTokens          default output cap (0 = leave it to the server)
+- insert:
+    - id: local-llm
+      name: 'dsh-plugin-local-llm'
+      config:
+        apiKey: 'dsh-local'
+        probeTimeoutMs: 2500
+        scanTtlMs: 15000
+        maxTokens: 0
+        providers:
+          lmstudio:
+            label: LM Studio
+            vendor: lmstudio
+            baseURL: 'http://127.0.0.1:1234/v1'
+            baseURLEnv: ['LMSTUDIO_BASE_URL']
+          ollama:
+            label: Ollama
+            vendor: ollama
+            baseURL: 'http://127.0.0.1:11434/v1'
+            baseURLEnv: ['OLLAMA_BASE_URL']
+          strata:
+            label: Strata
+            vendor: strata
+            baseURL: 'http://127.0.0.1:8080/v1'
+            baseURLEnv: ['STRATA_BASE_URL', 'STRATA_URL']
+            # Strata names its packs by quantization, and its model listing is
+            # not a documented contract. Declare what you serve here so the
+            # picker shows it with a real context window even when the server
+            # advertises nothing. `strata launch --status` prints the names.
+            models:
+              - id: iq3_s
+                name: Qwen3.8-Flash-Next IQ3_S
+                contextWindow: 32768
+          lemonade:
+            label: Lemonade
+            vendor: lemonade
+            baseURL: 'http://127.0.0.1:13305/v1'
+            baseURLEnv: ['LEMONADE_BASE_URL', 'LEMONADE_SERVER_URL']
+          local-openai:
+            label: Local OpenAI-compatible
+            vendor: openai
+            enabled: false
+            baseURL: 'http://127.0.0.1:8081/v1'
+            baseURLEnv: ['DSH_LOCAL_OPENAI_BASE_URL']

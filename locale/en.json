@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Local LLM Engines",
+    "description": "Runs the agent on models served by your own machine: LM Studio, Ollama, Strata, Lemonade Server, or any OpenAI-compatible chat-completions endpoint. Each engine registers as a provider route you pick in the model selector, and is declared as a configurable third-party provider with its own endpoint, environment overrides, and model discovery."
+  }
+}

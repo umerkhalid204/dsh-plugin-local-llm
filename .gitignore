@@ -1,0 +1,12 @@
+# Install and pack artifacts.
+node_modules/
+*.tgz
+pkg-out/
+dist/
+
+# Staged by test/dry-run.mjs: a copy of the sources beside the dev shims.
+test/shim/
+
+# Local clutter.
+*.log
+.DS_Store

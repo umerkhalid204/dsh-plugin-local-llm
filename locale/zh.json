@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "本地大模型引擎",
+    "description": "让智能体运行在你自己机器上提供的模型：LM Studio、Ollama、Strata、Lemonade Server，或任何兼容 OpenAI 的 chat-completions 端点。每个引擎都会注册为可在模型选择器中直接选用的提供方路由，并作为可配置的第三方提供方被声明，拥有各自的端点、环境变量覆盖与模型发现。"
+  }
+}
