@@ -96,6 +96,9 @@ const ctx = {
 // deliberate: if the unwrap ever regressed, every engine would silently fall back
 // to built-in defaults and the catalog assertions below would fail loudly.
 const declaredProviders = {
+  // Repointed off 1234 so the suite can never talk to a real LM Studio that
+  // happens to be running on this machine, and never fail because one is.
+  lmstudio: { baseURL: 'http://127.0.0.1:12340/v1' },
   'local-openai': { enabled: true },
   strata: { models: [{ id: 'iq3_s', name: 'Qwen3.8-Flash-Next IQ3_S', contextWindow: 32768 }] },
 }
@@ -163,7 +166,11 @@ check('lemonade: non-chat deployments are excluded', !lemonade.some((model) => m
 check('lemonade: max_context_window read', lemonade.find((model) => model.id === 'Qwen3-0.6B-GGUF')?.contextWindow === 40960)
 
 const lmstudio = await adapter.listModels('lmstudio')
-check('lmstudio: display name and context window read', lmstudio[0]?.name === 'Fake Coder 7B' && lmstudio[0]?.contextWindow === 32768, JSON.stringify(lmstudio[0]))
+// Names come from the id because a live server sends no `display_name`, and the
+// resident model sorts first.
+check('lmstudio: id-derived name and real context window', lmstudio[0]?.name === 'fake-coder-7b' && lmstudio[0]?.contextWindow === 32768, JSON.stringify(lmstudio[0]))
+check('lmstudio: every chat type is listed, not just one spelling', lmstudio.map((model) => model.id).join(',') === 'fake-coder-7b,fake-vision-11b', lmstudio.map((model) => model.id).join(','))
+check('lmstudio: a vlm row offers image input', lmstudio[1]?.inputModalities?.join('+') === 'text+image' && lmstudio[1]?.contextWindow === 262144, JSON.stringify(lmstudio[1]))
 check('lmstudio: embedding-only rows are excluded', !lmstudio.some((model) => model.id === 'fake-embedder'), lmstudio.map((model) => model.id).join(', '))
 
 const ollama = await adapter.listModels('ollama')
@@ -202,7 +209,8 @@ check('tool call: split arguments reassembled', endedCall?.type === 'tool-call' 
 check('tool call: finish reason is tool-calls', call.at(-1)?.reason?.kind === 'tool-calls', call.at(-1)?.reason?.kind)
 
 const truncated = await collect({ provider: 'local-openai', model: 'fake-vision-11b', messages: [{ role: 'user', content: [{ type: 'text', text: 'HALFTOKEN' }] }] })
-check('length finish surfaces', truncated.at(-1)?.reason?.kind === 'length', truncated.at(-1)?.reason?.kind)
+// The wire says `length`; the harness FinishReasonMap spells it `max-tokens`.
+check('a capped reply surfaces as max-tokens', truncated.at(-1)?.reason?.kind === 'max-tokens', truncated.at(-1)?.reason?.kind)
 
 const unknown = await adapter.listModels('nope').then(() => null, (error) => error)
 check('unowned route rejected', unknown?.code === 'NO_ADAPTER', unknown?.code)

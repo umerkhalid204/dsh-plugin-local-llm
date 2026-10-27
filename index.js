@@ -73,6 +73,15 @@ export const inject = ['llm', 'tools']
  */
 const VENDOR_VALUES = ['lmstudio', 'ollama', 'strata', 'lemonade', 'openai']
 
+/**
+ * LM Studio labels every row of its native listing by model *type*, and that is
+ * the only field separating a row that can drive an agent from one that cannot.
+ * A live server reports `llm` and `vlm` for its chat models, with `embeddings`
+ * sitting in the same list — never the literal `model` a naive reading of the
+ * shape would assume.
+ */
+const LM_STUDIO_CHAT_TYPES = new Set(['llm', 'vlm', 'ocr'])
+
 function buildConfig(Schema) {
   if (typeof Schema?.object !== 'function' || typeof Schema?.dict !== 'function' || typeof Schema?.union !== 'function') return undefined
   // A node's `meta` is a live object on the instance a factory returns, so a
@@ -302,21 +311,27 @@ async function probeEngine(engine, options, signal) {
       return result
     }
     if (engine.vendor === 'lmstudio') {
+      // The native listing carries what `/v1/models` does not: load state,
+      // quantization, the context window the harness needs to price a request,
+      // and the type filter above. Vision is the `vlm` type itself; tool support
+      // is a capability, not a separate listing.
       const listed = await httpJson(`${originOf(engine.baseURL)}/api/v0/models`, { headers: auth, timeoutMs: options.probeTimeoutMs, signal })
       result.alive = true
       result.server = 'LM Studio'
-      const items = Array.isArray(listed.data) ? listed.data : []
-      result.models = items
-        .filter((entry) => entry.type === 'model' || entry.type === undefined)
+      result.models = (Array.isArray(listed.data) ? listed.data : [])
+        .filter((entry) => typeof entry?.id === 'string' && entry.id && (entry.type === undefined || LM_STUDIO_CHAT_TYPES.has(entry.type)))
+        // A resident model answers without first loading weights, so lead with it.
+        .sort((a, b) => Number(b.state === 'loaded') - Number(a.state === 'loaded'))
         .slice(0, 40)
         .map((entry) => ({
           id: entry.id,
           name: entry.display_name || entry.id,
           loaded: entry.state === 'loaded',
-          state: entry.state,
-          quantization: entry.quantization,
-          contextWindow: entry.max_context_length,
-          vision: entry.architecture?.modality === 'mmproj' || undefined,
+          ...(entry.state ? { state: entry.state } : {}),
+          ...(entry.quantization ? { quantization: entry.quantization } : {}),
+          ...(positiveInt(entry.max_context_length) ? { contextWindow: positiveInt(entry.max_context_length) } : {}),
+          ...(entry.type === 'vlm' ? { vision: true } : {}),
+          ...(Array.isArray(entry.capabilities) && entry.capabilities.includes('tool_use') ? { toolCalling: true } : {}),
         }))
       result.models = applyCatalogFallback(engine, result.models)
       return result
@@ -701,7 +716,10 @@ class LocalOpenAiAdapter extends LlmAdapter {
 
     yield* closeBlocks()
     if (usage) yield { type: 'usage', usage }
-    const kind = finishReason === 'length' ? 'length' : finishReason === 'tool_calls' || finishReason === 'function_call' ? 'tool-calls' : 'stop'
+    // The wire says `length`; the harness taxonomy is `max-tokens` (its
+    // FinishReasonMap has no `length`), and a consumer that relies on that kind
+    // to notice a truncated reply would never see one otherwise.
+    const kind = finishReason === 'length' ? 'max-tokens' : finishReason === 'tool_calls' || finishReason === 'function_call' ? 'tool-calls' : 'stop'
     yield { type: 'finish', reason: { kind } }
   }
 }
@@ -961,6 +979,7 @@ export function apply(ctx, config = {}) {
         const prompt = typeof args.prompt === 'string' && args.prompt ? args.prompt : 'Reply with exactly one word: pong'
         const started = Date.now()
         const text = []
+        const reasoning = []
         let usage
         let finish
         try {
@@ -971,13 +990,29 @@ export function apply(ctx, config = {}) {
             messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
           })) {
             if (chunk.type === 'text-delta') text.push(chunk.text)
+            // A reasoning model spends the whole output budget on its thinking
+            // channel before any answer token arrives, so an empty `text` beside
+            // a `length` finish is normally that and not a broken connection.
+            // Report what did stream rather than implying nothing worked.
+            else if (chunk.type === 'reasoning-delta') reasoning.push(chunk.text)
             else if (chunk.type === 'usage') usage = chunk.usage
             else if (chunk.type === 'finish') finish = chunk.reason
           }
         } catch (error) {
           return { ok: false, error: error instanceof Error ? error.message : String(error), provider, model }
         }
-        return { ok: finish?.kind !== 'error', kind: 'ping', provider, model, ms: Date.now() - started, text: text.join('').slice(0, 400), usage, finish }
+        const reasoningText = reasoning.join('')
+        return {
+          ok: finish?.kind !== 'error',
+          kind: 'ping',
+          provider,
+          model,
+          ms: Date.now() - started,
+          text: text.join('').slice(0, 400),
+          ...(text.length === 0 && reasoningText ? { reasoningChars: reasoningText.length, reasoning: reasoningText.slice(0, 240) } : {}),
+          usage,
+          finish,
+        }
       }
       default:
         return { ok: false, error: `unknown action "${action}"; use scan | list | status | use | ping` }
@@ -1067,7 +1102,7 @@ function summarize(value) {
   if (value.ok === false) return `local-llm failed: ${value.error ?? 'unknown error'}`
   switch (value.kind) {
     case 'ping':
-      return `ping ${value.provider}/${value.model}: ${value.ms}ms finish=${value.finish?.kind ?? 'none'}${value.usage ? ` tokens ${value.usage.inputTokens}->${value.usage.outputTokens}` : ''} -> ${value.text || '(no text)'}`
+      return `ping ${value.provider}/${value.model}: ${value.ms}ms finish=${value.finish?.kind ?? 'none'}${value.usage ? ` tokens ${value.usage.inputTokens}->${value.usage.outputTokens}` : ''} -> ${value.text || (value.reasoningChars ? `(thought for ${value.reasoningChars} chars and hit the cap before answering; raise maxTokens) ${value.reasoning ?? ''}` : '(no text)')}`
     case 'settings':
       return [
         `settings namespace: ${value.settingsNs}`,

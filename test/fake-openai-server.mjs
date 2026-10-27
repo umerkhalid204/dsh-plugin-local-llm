@@ -3,7 +3,7 @@
  * `node test/dry-run.mjs`. It exists so the catalog parsing in index.js can be
  * exercised without installing LM Studio, Ollama, Strata, Lemonade or llama.cpp.
  *
- *   PORT=1234  ENGINE=lmstudio node test/fake-openai-server.mjs
+ *   PORT=12340  ENGINE=lmstudio node test/fake-openai-server.mjs
  *   PORT=11434 ENGINE=ollama   node test/fake-openai-server.mjs
  *   PORT=8080  ENGINE=strata   node test/fake-openai-server.mjs
  *   PORT=13305 ENGINE=lemonade node test/fake-openai-server.mjs
@@ -44,10 +44,15 @@ function catalog(res) {
     return send(res, 200, { object: 'list', data: [{ id: 'iq3_s' }, { id: 'q2_0' }] })
   }
   if (ENGINE === 'lmstudio') {
+    // Transcribed from a live LM Studio `/api/v0/models`: chat rows are typed
+    // `llm` and `vlm` (never `model`), there is no `display_name` or
+    // `architecture` block, `tool_use` is a capability, and an `embeddings` row
+    // shares the list. Getting this wrong is exactly how a filter written
+    // against the fixture ends up listing nothing against the real server.
     const data = [
-      { id: 'fake-coder-7b', display_name: 'Fake Coder 7B', type: 'model', state: 'loaded', quantization: 'Q4_K_M', max_context_length: 32768, architecture: { modality: 'text' } },
-      { id: 'fake-vision-11b', display_name: 'Fake Vision 11B', type: 'model', state: 'not-loaded', quantization: 'Q8_0', max_context_length: 16384, architecture: { modality: 'mmproj' } },
-      { id: 'fake-embedder', display_name: 'Fake Embedder', type: 'embeddings', state: 'loaded', max_context_length: 8192 },
+      { id: 'fake-coder-7b', object: 'model', type: 'llm', publisher: 'ggml-org', arch: 'qwen2', compatibility_type: 'gguf', quantization: 'Q4_K_M', state: 'loaded', max_context_length: 32768, capabilities: ['tool_use'] },
+      { id: 'fake-vision-11b', object: 'model', type: 'vlm', publisher: 'HauhauCS', arch: 'qwen35', compatibility_type: 'gguf', quantization: 'IQ3_XXS', state: 'not-loaded', max_context_length: 262144, capabilities: ['tool_use'] },
+      { id: 'fake-embedder', object: 'model', type: 'embeddings', publisher: 'nomic-ai', compatibility_type: 'gguf', state: 'not-loaded', max_context_length: 8192, capabilities: [] },
     ]
     return send(res, 200, { data })
   }

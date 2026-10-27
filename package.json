@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-local-llm",
-  "version": "0.2.4",
+  "version": "0.2.7",
   "private": true,
   "description": "DeepSeek Harness plugin: run the agent on models served by your own machine. Registers lmstudio, ollama, strata, lemonade, and local-openai provider routes through an OpenAI-compatible chat-completions adapter, lists each engine in Settings as a configurable third-party provider with endpoint editing and model discovery, and adds the local_models tool.",
   "type": "module",
