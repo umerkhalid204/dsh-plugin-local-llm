@@ -56,18 +56,42 @@ local_models settings                   # can a settings surface edit these engi
 `use` writes the profile's default model, so new sessions start on that route.
 Any registered route is accepted — including one owned by another adapter.
 
-## Settings, and why the install layout matters
+## Settings: what it takes to appear on the Models page
 
-`providers.<id>` in this row's config is the single source of truth for an
-engine: endpoint, the `baseURLEnv` names allowed to override it, `apiKey`,
-`enabled`, and a hand-declared `models` catalog. The plugin declares each engine
-in the configurable-provider directory with `settingsNs: local-llm` and
-`settingsPath: ["providers", <id>]`, which is what the third-party provider list
-reads.
+Being registered is not enough. A provider shows up as a card only when three
+things line up, and each one cost a debugging round to learn:
 
-An **auto-generated editing form** additionally needs the plugin's `Config`
-schema, and that needs `@deepseek-ai/schemastery` importable from the *installed*
-package. Two install layouts behave differently:
+1. **The directory entry.** `providers.<id>` in this row's config is the single
+   source of truth for an engine: endpoint, the `baseURLEnv` names allowed to
+   override it, `apiKey`, `enabled`, and a hand-declared `models` catalog. The
+   plugin declares each engine in the configurable-provider directory with
+   `settingsNs: local-llm` and `settingsPath: ["providers", <id>]` — the address
+   a provider card reads and writes.
+2. **A described settings namespace.** `settings.describe()` enumerates *active*
+   plugin entries whose `Config` is a schemastery instance, so the schema has to
+   be importable from the **installed** package — see the install layouts below.
+   The row also calls `settings.configure({ auto: false })`, because the Models
+   page renders its card; without that you would get a duplicate auto-generated
+   page beside it.
+3. **A `meta.volatile` marker.** This is the one that is easy to miss: the
+   settings service builds a form from *only* the fields whose nearest schema
+   node carries `meta.volatile`, returns no descriptor at all when nothing is
+   marked, and `mutate` refuses any write path that does not lie beneath a
+   volatile node. `providers` is marked, which is also what lets an endpoint be
+   repointed without remounting the row — so `index.js` re-reads the live config
+   before scanning, discovering or answering the tool. The plain knobs
+   (`probeTimeoutMs`, `scanTtlMs`, `maxTokens`, the default `apiKey`) are
+   deliberately *not* volatile: they are honoured at activation, and a form would
+   imply otherwise.
+
+schemastery v3 has no factory for a marker, but a node's `meta` is a live object
+on the instance a factory returns, so it is attached by mutation. Compose with the
+factories rather than handing the constructor a raw node tree: `settings` calls
+`toJSON()` on every child it recurses into, and a hand-written tree leaves bare
+nodes sitting in `dict`, which throws inside `describe()` and takes the whole
+settings document down with it.
+
+Two install layouts behave differently:
 
 - **Installed as a package** (tarball or registry) — the copy lives at
   `~/.dsh/profiles/<profile>/node_modules/dsh-plugin-local-llm`, where its
@@ -102,16 +126,20 @@ engine, delete the other provider declaration and reload the profile.
 ## Development notes
 
 - `node --check index.js`; ESM, no build step.
-- `node test/dry-run.mjs` runs 27 offline checks. It stages a throwaway tree
+- `node test/dry-run.mjs` runs 30 offline checks, including that `providers` is a
+  dict marked volatile, that an engine api key is declared secret, and that the
+  staged config reaches the plugin as a reactive cell (so a regression in reading
+  through one fails loudly instead of silently falling back to defaults). It stages a throwaway tree
   first: the runtime sources are copied to `test/shim/pkg` and the stand-ins in
   `test/shims/` are placed at `test/shim/node_modules/@deepseek-ai/{dsh-llm,schemastery}`,
   so the copy's bare imports resolve there and nothing in the package or the
   workspace gains a `node_modules` (`test/shim/` is gitignored). That staging
   matters: a stand-in inside the checkout's own module chain would satisfy a
   linked install and silently replace the real Harness module.
-- `test/shims/schemastery.js` mirrors the real v3 surface — lowercase factories,
-  nesting instead of chaining — so calling a builder method that does not exist
-  fails offline rather than at activation.
+- `test/shims/schemastery.js` mirrors the real v3 surface — `Schema` is a callable
+  class, the factories are lowercase statics that nest rather than chain, and a
+  node's `meta` is a live object you mutate — so calling a builder method that
+  does not exist fails offline rather than at activation.
 - Five fake servers, one per catalog dialect, back the suite and can be run by
   hand: `PORT=1234 ENGINE=lmstudio node test/fake-openai-server.mjs`, with
   `ENGINE=lmstudio|ollama|strata|lemonade|openai`. They also answer
