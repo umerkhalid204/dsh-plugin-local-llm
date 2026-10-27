@@ -91,11 +91,17 @@ const ctx = {
   logger: { info: () => {}, warn: () => {} },
 }
 
+// `providers` is marked volatile, which in the Loader means it reaches the
+// plugin as a reactive cell rather than a plain map. Staging it that way here is
+// deliberate: if the unwrap ever regressed, every engine would silently fall back
+// to built-in defaults and the catalog assertions below would fail loudly.
+const declaredProviders = {
+  'local-openai': { enabled: true },
+  strata: { models: [{ id: 'iq3_s', name: 'Qwen3.8-Flash-Next IQ3_S', contextWindow: 32768 }] },
+}
+
 apply(ctx, {
-  providers: {
-    'local-openai': { enabled: true },
-    strata: { models: [{ id: 'iq3_s', name: 'Qwen3.8-Flash-Next IQ3_S', contextWindow: 32768 }] },
-  },
+  providers: { get: () => declaredProviders, set: () => {} },
 })
 
 const adapter = captured.adapter
@@ -116,22 +122,23 @@ const collect = async (options) => {
 
 // --- schema ---------------------------------------------------------------
 const config = mod.Config
-check('Config is declared', Boolean(config), config ? `kind=${config.kind}` : 'undefined')
+const providers = config?.dict?.providers
+check('Config is declared', Boolean(config), config ? `type=${config.type}` : 'undefined')
+// `settings` projects a form from volatile-marked fields only, and `mutate`
+// refuses any path not beneath one, so this marker is what puts a provider card
+// on the Models page at all.
+check('providers is a dict marked volatile so a form exists and the path is writable',
+  providers?.type === 'dict' && providers?.meta?.volatile === true,
+  JSON.stringify(providers?.meta ?? null),
+)
+check('the volatile map types an engine row', ['label', 'vendor', 'baseURL', 'apiKey', 'enabled', 'baseURLEnv', 'models'].every((key) => providers?.inner?.dict?.[key]), Object.keys(providers?.inner?.dict ?? {}).join(', '))
+check('vendor union names every engine', providers?.inner?.dict?.vendor?.list?.map((entry) => entry.value).join(',') === 'lmstudio,ollama,strata,lemonade,openai', providers?.inner?.dict?.vendor?.list?.map((entry) => entry.value).join(','))
+check('an engine api key is write-only', providers?.inner?.dict?.apiKey?.meta?.role === 'secret', JSON.stringify(providers?.inner?.dict?.apiKey?.meta))
+check('plain knobs stay ordinary config, not form fields', config?.dict?.probeTimeoutMs?.meta?.volatile === undefined && config?.dict?.apiKey?.meta?.volatile === undefined)
 // `listModels` is the picker-facing shape: id, name, context, modalities. The
 // richer vendor metadata — load state, quantization, tool and reasoning labels —
 // is carried on the probe result that `local_models list` renders, so each
 // assertion below targets the layer that actually holds the field.
-check('Config types the top-level knobs and a providers dict',
-  config?.kind === 'object'
-  && config?.properties?.providers?.kind === 'dict'
-  && config?.properties?.providers?.inner?.kind === 'union'
-  && config?.properties?.probeTimeoutMs?.meta?.min === 0,
-  JSON.stringify(config?.properties?.providers ?? null),
-)
-check('Config names every vendor in the row union',
-  config?.properties?.providers?.inner?.of?.[0]?.properties?.vendor?.of?.map((entry) => entry.value).join(',') === 'lmstudio,ollama,strata,lemonade,openai',
-  config?.properties?.providers?.inner?.of?.[0]?.properties?.vendor?.of?.map((entry) => entry.value).join(','),
-)
 
 // --- registration and ownership ------------------------------------------
 check('claims unclaimed ids', ['lmstudio', 'strata', 'lemonade', 'local-openai'].every((id) => captured.providers.includes(id)), captured.providers.join(', '))

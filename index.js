@@ -39,6 +39,10 @@ import { LocalLlmAdapter, LocalLlmError, noAttributionHeaders } from './vendor/l
 
 const harness = await import('@deepseek-ai/dsh-llm').catch(() => null)
 const schemastery = (await import('@deepseek-ai/schemastery').catch(() => null))?.default ?? null
+// Volatile config fields arrive as cosmokit reactive cells, so reading a live
+// value means unwrapping one first. Optional for the same reason as above.
+const cosmokit = (await import('@deepseek-ai/cosmokit').catch(() => null))
+const isVolatile = cosmokit?.isVolatile ?? ((value) => Boolean(value) && typeof value.get === 'function' && typeof value.set === 'function')
 
 const LlmAdapter = harness?.LlmAdapter ?? LocalLlmAdapter
 const LlmError = harness?.LlmError ?? LocalLlmError
@@ -51,46 +55,63 @@ export const name = 'local-llm'
 export const inject = ['llm', 'tools']
 
 /**
- * The Config schema is what makes these engines editable: `settings` projects it
- * into a form keyed by this entry's id, and the configurable-provider directory
- * points at paths inside it (`providers.<id>`), which is how a Models settings
- * page reads and writes an engine's endpoint.
+ * The Config schema is what makes these engines editable, and the rules are
+ * stricter than they look. `settings` projects a form from **only** the fields
+ * whose nearest schema node carries `meta.volatile` — those are the live fields
+ * a provider card writes — and `mutate` refuses any path that does not lie
+ * beneath a volatile node. A schema with no volatile field describes no form at
+ * all, which is why the engines stayed out of the Models page even though the
+ * directory listed them. pi-ai marks its `providers` map volatile for exactly
+ * this reason: an endpoint can then be repointed without remounting the row.
+ * Everything else here stays ordinary configuration — present in the patch,
+ * preserved across a form write, not editable from the Models page.
  *
- * schemastery v3 names its factories in lowercase and composes by nesting rather
- * than chaining (`Schema.object({ a: Schema.string() })`, `Schema.union([...])`,
- * `Schema.dict(inner)`), and its optionality convention could not be confirmed
- * from a profile install, where the package is unreachable. So only the
- * top-level fields this bundle's patch always restates are typed — a config
- * override replaces `config` wholesale, so they are present by construction —
- * and a provider row stays a union of a typed row and anything. An over-strict
- * validator would be worse than a loose one here: config that fails validation
- * can leave the row deactivated, and the local routes go down with it.
+ * schemastery v3 composes by nesting lowercase factories (`Schema.object`,
+ * `Schema.dict`, `Schema.natural`), but a volatile marker has no factory, so the
+ * tree is declared in schemastery's own node form and handed to its constructor
+ * — the same move `dsh-settings` itself makes with `new z(schema.toJSON())`.
  */
+const VENDOR_VALUES = ['lmstudio', 'ollama', 'strata', 'lemonade', 'openai']
+
 function buildConfig(Schema) {
   if (typeof Schema?.object !== 'function' || typeof Schema?.dict !== 'function' || typeof Schema?.union !== 'function') return undefined
-  const engineRow = Schema.union([
+  // A node's `meta` is a live object on the instance a factory returns, so a
+  // marker is attached by mutating it — which is also the only way to attach
+  // one, since no factory takes a meta argument. Compose with the factories
+  // rather than a raw node tree: a hand-written tree leaves bare nodes sitting
+  // in `dict`, and `settings` calls `toJSON()` on every child it recurses into.
+  const providers = Schema.dict(
     Schema.object({
       label: Schema.string(),
-      vendor: Schema.union([
-        Schema.const('lmstudio'),
-        Schema.const('ollama'),
-        Schema.const('strata'),
-        Schema.const('lemonade'),
-        Schema.const('openai'),
-      ]),
+      vendor: Schema.union(VENDOR_VALUES.map((value) => Schema.const(value))),
       baseURL: Schema.string(),
-      apiKey: Schema.string(),
+      // Write-only: only the fact that one is set ever reaches a surface.
+      apiKey: mark(Schema.string(), { role: 'secret' }),
       enabled: Schema.boolean(),
+      baseURLEnv: Schema.array(Schema.string()),
+      models: Schema.array(
+        Schema.object({
+          id: Schema.string(),
+          name: Schema.string(),
+          contextWindow: Schema.natural(),
+          maxTokens: Schema.natural(),
+        }),
+      ),
     }),
-    Schema.any(),
-  ])
+  )
+  providers.meta.volatile = true
   return Schema.object({
     apiKey: Schema.string(),
     probeTimeoutMs: Schema.natural(),
     scanTtlMs: Schema.natural(),
     maxTokens: Schema.natural(),
-    providers: Schema.dict(engineRow),
+    providers,
   })
+}
+
+function mark(node, meta) {
+  if (node?.meta) Object.assign(node.meta, meta)
+  return node
 }
 
 export const Config = schemastery ? buildConfig(schemastery) : undefined
@@ -135,7 +156,7 @@ function defaultModelOf(ctx) {
 }
 
 function normalizeOptions(config = {}) {
-  const given = config.providers ?? {}
+  const given = unwrapVolatile(config.providers) ?? {}
   const engines = []
   for (const [id, fallback] of Object.entries(DEFAULT_PROVIDERS)) {
     const declared = given[id]
@@ -168,6 +189,13 @@ function normalizeOptions(config = {}) {
     // require an Authorization header to exist.
     apiKey: typeof config.apiKey === 'string' && config.apiKey ? config.apiKey : 'dsh-local',
   }
+}
+
+/** A field whose schema node carries `meta.volatile` is handed to the plugin as a
+ * cosmokit reactive cell rather than a plain value, so reading a live value means
+ * reading through the cell first. */
+function unwrapVolatile(value) {
+  return isVolatile(value) ? unwrapVolatile(value.get()) : value
 }
 
 function pruneUndefined(value) {
@@ -753,6 +781,28 @@ export function apply(ctx, config = {}) {
    */
   const settingsNs = ctx.fiber?.entry?.options?.id ?? 'local-llm'
 
+  /**
+   * `providers` is volatile, so the Models page can rewrite an endpoint without
+   * remounting this row — and nothing would notice unless the values the adapter
+   * and scan cache closed over are refreshed from the live config. Both hold this
+   * same `options` object and the same `engines` array, so refreshing in place
+   * reaches them; the provider *ids* themselves are fixed until the row remounts,
+   * because the adapter registry has no per-route replacement.
+   */
+  function liveOptions() {
+    const fresh = normalizeOptions(ctx.fiber?.config ?? config)
+    options.engines.length = 0
+    options.engines.push(...fresh.engines)
+    Object.assign(options, {
+      scanTtlMs: fresh.scanTtlMs,
+      probeTimeoutMs: fresh.probeTimeoutMs,
+      requestTimeoutMs: fresh.requestTimeoutMs,
+      maxTokens: fresh.maxTokens,
+      apiKey: fresh.apiKey,
+    })
+    return options
+  }
+
   // Both the adapter registry and the provider directory are all-or-nothing, so
   // an id another plugin already owns is left to its owner instead of being
   // claimed (which would throw, in this plugin or in the one that mounts after
@@ -788,7 +838,7 @@ export function apply(ctx, config = {}) {
   // Discovery is keyed by namespace, not provider, because a provider being
   // added has no route to name yet: the surface sends a draft endpoint and this
   // answers with what that endpoint advertises.
-  ctx.effect(() => ctx.llm.registerModelDiscovery(settingsNs, (request, signal) => discoverDraft(options, request, signal)), 'local-llm: model discovery')
+  ctx.effect(() => ctx.llm.registerModelDiscovery(settingsNs, (request, signal) => discoverDraft(liveOptions(), request, signal)), 'local-llm: model discovery')
 
   // The Models page owns this plugin's form; a second auto-generated one would
   // show the same provider fields twice.
@@ -802,6 +852,7 @@ export function apply(ctx, config = {}) {
 
   /** Shared implementation behind the tool and the Web route. */
   async function act(action, args = {}) {
+    liveOptions()
     switch (action) {
       case 'scan': {
         cache.invalidate()
