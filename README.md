@@ -141,8 +141,10 @@ engine, delete the other provider declaration and reload the profile.
   node's `meta` is a live object you mutate — so calling a builder method that
   does not exist fails offline rather than at activation.
 - Five fake servers, one per catalog dialect, back the suite and can be run by
-  hand: `PORT=1234 ENGINE=lmstudio node test/fake-openai-server.mjs`, with
-  `ENGINE=lmstudio|ollama|strata|lemonade|openai`. They also answer
+  hand: `PORT=12340 ENGINE=lmstudio node test/fake-openai-server.mjs`, with
+  `ENGINE=lmstudio|ollama|strata|lemonade|openai` (the LM Studio fixture sits on
+  `12340` so it can never collide with, or accidentally test against, a real LM
+  Studio on `1234`). They also answer
   `/v1/chat/completions`: a prompt containing `TOOLTEST` streams a split tool
   call, `HALFTOKEN` ends with finish_reason `length`.
 - Host code hot-reloads on a plugin off/on toggle. `package.json` and
